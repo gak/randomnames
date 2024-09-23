@@ -1,64 +1,64 @@
 #![feature(error_generic_member_access)]
 
-use std::backtrace::Backtrace;
-
-use rand::{SeedableRng, seq::SliceRandom};
+use chrono::DateTime;
+use chrono::Duration;
+use chrono::Utc;
+use rand::{seq::SliceRandom, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use reqwest;
+use sha2::Digest;
+use sha2::Sha256;
 use snafu::{ensure, ResultExt, Snafu};
+use std::backtrace::Backtrace;
 use tokio;
 
 #[derive(Debug, Snafu)]
-enum Error {
-    #[snafu(display("Failed to fetch block hash: {}", source))]
-    FetchError { source: reqwest::Error, backtrace: Backtrace },
-    #[snafu(display("Wrong sized block hash: len:{} hex:{}", hash.len(), hex::encode(hash)))]
-    WrongSizeError { hash: Vec<u8>, backtrace: Backtrace },
-    #[snafu(display("Failed to decode block hash: {}", source))]
-    DecodeError { source: hex::FromHexError, backtrace: Backtrace },
-}
+enum Error {}
+
+const NAMES: &[&str] = &[
+    "abrooks",
+    "alecthomas",
+    "brad",
+    "deniseli",
+    "gak",
+    "jonathanj",
+    "juho",
+    "matt2e",
+    "safeer",
+    "stuartwdouglas",
+    "tlongwell",
+    "tom",
+    "wesbillman",
+    "worstell",
+];
 
 #[snafu::report]
 #[tokio::main]
 async fn main() -> Result<(), Error> {
-    let block_hash = fetch_latest_hash().await?;
-    println!("Block hash: {}", hex::encode(&block_hash));
+    for days_in_the_future in 0..=7 {
+        let now = Utc::now();
+        let day = now + Duration::days(days_in_the_future);
+        let names = get_names(&day);
 
-    // last 8 bytes of the block hash
-    let seed = u64::from_le_bytes(block_hash[24..].try_into().unwrap());
-    println!("Seed: 0x{}", hex::encode(seed.to_le_bytes()));
+        let names_str = names.join(", ");
+        println!("{}Z: {names_str}", day.format("%Y-%m-%d"));
+    }
 
-    let mut rng = ChaCha20Rng::seed_from_u64(seed);
-    let mut names = vec![
-        "alecthomas",
-        "brad",
-        "deniseli",
-        "gak",
-        "jonathanj-square",
-        "juho",
-        "matt2e",
-        "safeer",
-        "stuartwdouglas",
-        "wesbillman",
-        "worstell",
-    ];
-    println!("Original: {:?}", names);
-    names.shuffle(&mut rng);
-    println!("\nShuffled:\n{}", names.join("\n"));
     Ok(())
 }
 
-async fn fetch_latest_hash() -> Result<Vec<u8>, Error> {
-    let url = "https://blockchain.info/q/latesthash";
-    let hash_string = reqwest::get(url)
-        .await
-        .context(FetchSnafu)?
-        .text()
-        .await
-        .context(FetchSnafu)?;
+fn get_names(now: &DateTime<Utc>) -> Vec<&str> {
+    let seed = seed_from_date(now);
+    let mut rng = ChaCha20Rng::seed_from_u64(seed);
+    let mut names = NAMES.to_vec();
+    names.shuffle(&mut rng);
+    names
+}
 
-    let hash = hex::decode(&hash_string[..64]).context(DecodeSnafu)?;
-    ensure!(hash.len() == 32, WrongSizeSnafu { hash });
-
-    Ok(hash)
+fn seed_from_date(date: &DateTime<Utc>) -> u64 {
+    let day = date.format("%Y-%m-%d").to_string();
+    let mut hasher = Sha256::default();
+    hasher.update(day.as_bytes());
+    let bytes = hasher.finalize();
+    u64::from_ne_bytes(bytes[0..8].try_into().unwrap())
 }
